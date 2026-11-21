@@ -2,83 +2,9 @@
   "use strict";
 
   var THEME_KEY = "mi-ia-local-theme";
+  var LAST_ID_KEY = "mi-ia-local-last-conversation";
   var ENGINE_NOTICE =
     "Motor de IA local pendiente de integración. Todavía no se generan respuestas.";
-
-  /* ------------------------------------------------------------------ */
-  /* Almacenamiento en memoria (etapa 2).                               */
-  /* En la etapa 3 se puede reemplazar por IndexedDB respetando         */
-  /* esta misma interfaz.                                               */
-  /* ------------------------------------------------------------------ */
-  function createMemoryStorage() {
-    var conversations = [];
-
-    function clone(value) {
-      return JSON.parse(JSON.stringify(value));
-    }
-
-    return {
-      async listConversations() {
-        return clone(
-          conversations
-            .slice()
-            .sort(function (a, b) {
-              return b.updatedAt - a.updatedAt;
-            })
-            .map(function (item) {
-              return {
-                id: item.id,
-                title: item.title,
-                createdAt: item.createdAt,
-                updatedAt: item.updatedAt
-              };
-            })
-        );
-      },
-
-      async getConversation(id) {
-        var found = conversations.find(function (item) {
-          return item.id === id;
-        });
-        return found ? clone(found) : null;
-      },
-
-      async createConversation() {
-        var now = Date.now();
-        var conversation = {
-          id: createId(),
-          title: "Nueva conversación",
-          createdAt: now,
-          updatedAt: now,
-          messages: []
-        };
-        conversations.unshift(conversation);
-        return clone(conversation);
-      },
-
-      async addMessage(conversationId, message) {
-        var found = conversations.find(function (item) {
-          return item.id === conversationId;
-        });
-        if (!found) {
-          throw new Error("La conversación no existe.");
-        }
-        var stored = Object.assign({ id: createId(), createdAt: Date.now() }, message);
-        found.messages.push(stored);
-        found.updatedAt = stored.createdAt;
-        if (stored.role === "user" && found.title === "Nueva conversación") {
-          found.title = titleFromText(stored.content);
-        }
-        return clone(stored);
-      },
-
-      async deleteConversation(id) {
-        conversations = conversations.filter(function (item) {
-          return item.id !== id;
-        });
-      }
-    };
-  }
 
   /* El motor real se integra en la etapa 5. Este objeto solo expone
      el estado para que la UI pueda mostrar el indicador de generación
@@ -90,19 +16,6 @@
         return this.status === "generating";
       }
     };
-  }
-
-  function createId() {
-    if (window.crypto && typeof window.crypto.randomUUID === "function") {
-      return window.crypto.randomUUID();
-    }
-    return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
-  }
-
-  function titleFromText(text) {
-    var compact = String(text || "").replace(/\s+/g, " ").trim();
-    if (!compact) return "Nueva conversación";
-    return compact.length > 36 ? compact.slice(0, 36).trim() + "…" : compact;
   }
 
   function formatTime(timestamp) {
@@ -153,7 +66,7 @@
     return initial;
   }
 
-  var storage = createMemoryStorage();
+  var storage = null;
   var engine = createEngine();
   var state = {
     theme: initTheme(),
@@ -182,7 +95,8 @@
     confirmDialog: document.getElementById("confirm-dialog"),
     confirmCancel: document.getElementById("btn-confirm-cancel"),
     confirmDelete: document.getElementById("btn-confirm-delete"),
-    status: document.getElementById("status-badge")
+    status: document.getElementById("status-badge"),
+    storageWarning: document.getElementById("storage-warning")
   };
 
   function setSidebarOpen(open) {
@@ -216,39 +130,78 @@
     els.messages.innerHTML =
       '<div class="empty-state">' +
         "<h2>Empezá una conversación</h2>" +
-        "<p>El motor de IA local todavía no está integrado. Tus mensajes quedan en esta sesión, pero no se van a generar respuestas.</p>" +
+        "<p>El motor de IA local todavía no está integrado. Tus mensajes se guardan en este dispositivo, pero no se van a generar respuestas.</p>" +
       "</div>";
+  }
+
+  function appendSystemNotice() {
+    var article = document.createElement("article");
+    article.className = "msg msg-system";
+    var kicker = document.createElement("span");
+    kicker.className = "msg-kicker";
+    kicker.textContent = "Aviso del sistema";
+    article.appendChild(kicker);
+    article.appendChild(document.createTextNode(ENGINE_NOTICE));
+    els.messages.appendChild(article);
   }
 
   function renderMessages(conversation) {
     els.messages.innerHTML = "";
-    if (!conversation || !conversation.messages.length) {
+    var messages = conversation && conversation.messages ? conversation.messages : [];
+    /* El aviso del motor se dibuja, no se guarda como mensaje. */
+    var persisted = messages.filter(function (message) {
+      return message.role === "user" || message.role === "assistant";
+    });
+
+    if (!persisted.length) {
       renderEmptyState();
       syncTypingIndicator();
       return;
     }
 
-    conversation.messages.forEach(function (message) {
+    var hasAssistant = false;
+    persisted.forEach(function (message) {
       var article = document.createElement("article");
       if (message.role === "user") {
         article.className = "msg msg-user";
         article.textContent = message.content;
-      } else if (message.role === "system") {
-        article.className = "msg msg-system";
-        var kicker = document.createElement("span");
-        kicker.className = "msg-kicker";
-        kicker.textContent = "Aviso del sistema";
-        article.appendChild(kicker);
-        article.appendChild(document.createTextNode(message.content));
       } else {
+        hasAssistant = true;
         article.className = "msg msg-assistant";
         article.textContent = message.content;
       }
       els.messages.appendChild(article);
     });
 
+    if (!hasAssistant) {
+      appendSystemNotice();
+    }
+
     syncTypingIndicator();
     scrollToBottom();
+  }
+
+  function showStorageWarning(text) {
+    if (!els.storageWarning || !text) return;
+    els.storageWarning.hidden = false;
+    els.storageWarning.textContent = text;
+  }
+
+  function readLastId() {
+    try {
+      return localStorage.getItem(LAST_ID_KEY);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function saveLastId(id) {
+    try {
+      if (id) localStorage.setItem(LAST_ID_KEY, id);
+      else localStorage.removeItem(LAST_ID_KEY);
+    } catch (err) {
+      /* Si localStorage está bloqueado, al recargar se abre la más reciente. */
+    }
   }
 
   async function renderSidebar() {
@@ -311,6 +264,7 @@
     }
     var created = await storage.createConversation();
     state.currentId = created.id;
+    saveLastId(created.id);
     return created;
   }
 
@@ -318,6 +272,7 @@
     var conversation = await storage.getConversation(id);
     if (!conversation) return;
     state.currentId = id;
+    saveLastId(id);
     renderMessages(conversation);
     await renderSidebar();
   }
@@ -333,6 +288,7 @@
     }
     var created = await storage.createConversation();
     state.currentId = created.id;
+    saveLastId(created.id);
     renderMessages(created);
     await renderSidebar();
     setSidebarOpen(false);
@@ -363,6 +319,7 @@
       } else {
         var created = await storage.createConversation();
         state.currentId = created.id;
+        saveLastId(created.id);
         renderMessages(created);
         await renderSidebar();
       }
@@ -394,13 +351,11 @@
     event.preventDefault();
     var text = els.input.value.replace(/^\s+|\s+$/g, "");
     if (!text) return;
+    if (!storage) return;
 
     var conversation = await ensureConversation();
-    await storage.addMessage(conversation.id, { role: "user", content: text });
-    await storage.addMessage(conversation.id, {
-      role: "system",
-      content: ENGINE_NOTICE
-    });
+    await storage.appendMessage(conversation.id, { role: "user", content: text });
+    saveLastId(conversation.id);
 
     els.input.value = "";
     resizeComposer();
@@ -498,8 +453,41 @@
   updateOnlineStatus();
   syncTypingIndicator();
   void (async function start() {
+    try {
+      if (!window.MiIaLocalStorage || typeof window.MiIaLocalStorage.open !== "function") {
+        showStorageWarning("No se pudo cargar el módulo de almacenamiento. Las conversaciones no se van a guardar.");
+        return;
+      }
+      storage = await window.MiIaLocalStorage.open();
+      if (storage.warning) {
+        showStorageWarning(storage.warning);
+      }
+      await restoreSession();
+    } catch (err) {
+      showStorageWarning("No se pudo iniciar el almacenamiento. Las conversaciones no se van a guardar.");
+    }
+  })();
+
+  async function restoreSession() {
+    var list = await storage.listConversations();
+    var lastId = readLastId();
+    if (lastId) {
+      var found = await storage.getConversation(lastId);
+      if (found) {
+        state.currentId = found.id;
+        await refreshCurrent();
+        return;
+      }
+    }
+    if (list.length) {
+      state.currentId = list[0].id;
+      saveLastId(list[0].id);
+      await refreshCurrent();
+      return;
+    }
     var created = await storage.createConversation();
     state.currentId = created.id;
+    saveLastId(created.id);
     await refreshCurrent();
-  })();
+  }
 })();
