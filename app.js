@@ -3,19 +3,15 @@
 
   var THEME_KEY = "mi-ia-local-theme";
   var LAST_ID_KEY = "mi-ia-local-last-conversation";
-  var ENGINE_NOTICE =
-    "Motor de IA local pendiente de integración. Todavía no se generan respuestas.";
+  var NOTICE_NO_MODEL =
+    "Todavía no hay un modelo de IA descargado en este dispositivo, así que no se generó ninguna respuesta. Abrí «Modelos» para descargar uno.";
+  var NOTICE_NO_ENGINE =
+    "El motor de IA local no se pudo iniciar en este navegador, así que no se generó ninguna respuesta.";
 
-  /* El motor real se integra en la etapa 5. Este objeto solo expone
-     el estado para que la UI pueda mostrar el indicador de generación
-     cuando un motor de verdad esté trabajando. Nunca inventa respuestas. */
-  function createEngine() {
-    return {
-      status: "pending",
-      isGenerating: function () {
-        return this.status === "generating";
-      }
-    };
+  /* Motor real: engine.js (wllama / llama.cpp en WebAssembly).
+     Nunca se inventan respuestas: si no hay modelo o falla, se muestra un aviso. */
+  function getEngine() {
+    return window.MiIaLocalEngine || null;
   }
 
   function formatTime(timestamp) {
@@ -67,11 +63,16 @@
   }
 
   var storage = null;
-  var engine = createEngine();
   var state = {
     theme: initTheme(),
     currentId: null,
-    pendingDeleteId: null
+    pendingDeleteId: null,
+    notice: null,
+    busy: false,
+    streamEl: null,
+    modelConfirm: null,
+    modelError: null,
+    installed: {}
   };
 
   var els = {
@@ -92,6 +93,11 @@
     btnModels: document.getElementById("btn-models"),
     modelsDialog: document.getElementById("models-dialog"),
     modelsClose: document.getElementById("btn-models-close"),
+    modelsList: document.getElementById("models-list"),
+    modelsStorage: document.getElementById("models-storage"),
+    modelsEngine: document.getElementById("models-engine"),
+    gpuToggle: document.getElementById("gpu-toggle"),
+    typingLabel: document.querySelector("#typing-indicator .typing-label"),
     confirmDialog: document.getElementById("confirm-dialog"),
     confirmCancel: document.getElementById("btn-confirm-cancel"),
     confirmDelete: document.getElementById("btn-confirm-delete"),
@@ -181,9 +187,29 @@
     }
   }
 
+  function engineStatus() {
+    var engine = getEngine();
+    return engine ? engine.getState().status : "idle";
+  }
+
   function syncTypingIndicator() {
-    var generating = engine.isGenerating();
-    els.typing.hidden = !generating;
+    var status = engineStatus();
+    var loading = status === "loading";
+    var generating = status === "generating";
+    els.typing.hidden = !(loading || generating);
+    if (els.typingLabel) {
+      els.typingLabel.textContent = loading
+        ? "Cargando el modelo en memoria…"
+        : "La IA está escribiendo";
+    }
+    var stopMode = state.busy;
+    els.send.classList.toggle("is-stop", stopMode);
+    els.send.setAttribute("aria-label", stopMode ? "Detener" : "Enviar");
+    if (stopMode) {
+      els.send.disabled = engineStatus() !== "generating";
+    } else {
+      els.send.disabled = els.input.value.replace(/^\s+|\s+$/g, "") === "";
+    }
   }
 
   function resizeComposer() {
@@ -199,18 +225,26 @@
     els.messages.innerHTML =
       '<div class="empty-state">' +
         "<h2>Empezá una conversación</h2>" +
-        "<p>El motor de IA local todavía no está integrado. Tus mensajes se guardan en este dispositivo, pero no se van a generar respuestas.</p>" +
+        "<p>Todo se procesa en este dispositivo: tus mensajes no salen a internet. Para recibir respuestas, descargá un modelo desde «Modelos».</p>" +
       "</div>";
   }
 
-  function appendSystemNotice() {
+  function appendSystemNotice(notice) {
     var article = document.createElement("article");
-    article.className = "msg msg-system";
+    article.className = "msg msg-system" + (notice.kind === "error" ? " msg-error" : "");
     var kicker = document.createElement("span");
     kicker.className = "msg-kicker";
-    kicker.textContent = "Aviso del sistema";
+    kicker.textContent = notice.kind === "error" ? "Error del motor" : "Aviso del sistema";
     article.appendChild(kicker);
-    article.appendChild(document.createTextNode(ENGINE_NOTICE));
+    article.appendChild(document.createTextNode(notice.text));
+    if (notice.action === "models") {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-secondary notice-action";
+      btn.textContent = "Abrir Modelos";
+      btn.addEventListener("click", openModels);
+      article.appendChild(btn);
+    }
     els.messages.appendChild(article);
   }
 
@@ -228,22 +262,23 @@
       return;
     }
 
-    var hasAssistant = false;
     persisted.forEach(function (message) {
       var article = document.createElement("article");
       if (message.role === "user") {
         article.className = "msg msg-user";
         article.textContent = message.content;
       } else {
-        hasAssistant = true;
         article.className = "msg msg-assistant";
         article.textContent = message.content;
       }
       els.messages.appendChild(article);
     });
 
-    if (!hasAssistant) {
-      appendSystemNotice();
+    var last = persisted[persisted.length - 1];
+    if (state.notice && state.notice.conversationId === (conversation && conversation.id)) {
+      appendSystemNotice(state.notice);
+    } else if (last.role === "user" && !state.busy) {
+      appendSystemNotice(defaultNotice());
     }
 
     syncTypingIndicator();
@@ -397,9 +432,260 @@
     }
   }
 
+  function defaultNotice() {
+    var engine = getEngine();
+    if (!engine) return { kind: "info", text: NOTICE_NO_ENGINE };
+    return { kind: "info", text: NOTICE_NO_MODEL, action: "models" };
+  }
+
   function openModels() {
     els.modelsDialog.hidden = false;
+    state.modelError = null;
+    void renderModels();
     els.modelsClose.focus();
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === null || bytes === undefined || isNaN(bytes)) return "—";
+    var units = ["B", "KB", "MB", "GB"];
+    var value = bytes;
+    var i = 0;
+    while (value >= 1000 && i < units.length - 1) {
+      value = value / 1000;
+      i++;
+    }
+    var digits = i >= 2 && value < 100 ? 1 : 0;
+    return value.toLocaleString("es-UY", { maximumFractionDigits: digits, minimumFractionDigits: digits }) + " " + units[i];
+  }
+
+  function makeButton(text, className, onClick) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = className;
+    b.textContent = text;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  async function renderModels() {
+    var engine = getEngine();
+    els.modelsList.innerHTML = "";
+    if (!engine) {
+      var p = document.createElement("p");
+      p.className = "models-error";
+      p.textContent = "El motor de IA no se pudo cargar en este navegador (el archivo engine.js no se inició). Probá recargar la app.";
+      els.modelsList.appendChild(p);
+      els.modelsStorage.textContent = "";
+      els.modelsEngine.textContent = "";
+      return;
+    }
+    var st = engine.getState();
+    var installedList = [];
+    try {
+      installedList = await engine.listInstalled();
+    } catch (err) {
+      state.modelError = "No se pudo leer qué modelos hay guardados: " + (err && err.message ? err.message : err);
+    }
+    var installed = {};
+    installedList.forEach(function (x) { installed[x.id] = x; });
+    state.installed = installed;
+    var engineCache = { cached: false, bytes: 0 };
+    try { engineCache = await engine.engineCacheStatus(); } catch (err) { /* ignore */ }
+    var activeId = engine.getActiveId();
+
+    els.modelsList.innerHTML = "";
+    if (state.modelError) {
+      var e = document.createElement("p");
+      e.className = "models-error";
+      e.setAttribute("role", "alert");
+      e.textContent = state.modelError;
+      els.modelsList.appendChild(e);
+    }
+
+    engine.catalog.forEach(function (m) {
+      var card = document.createElement("section");
+      card.className = "model-card";
+      var head = document.createElement("div");
+      head.className = "model-head";
+      var name = document.createElement("h3");
+      name.textContent = m.name;
+      head.appendChild(name);
+      if (m.recommended) {
+        var badge = document.createElement("span");
+        badge.className = "model-badge";
+        badge.textContent = "Recomendado";
+        head.appendChild(badge);
+      }
+      card.appendChild(head);
+
+      var meta = document.createElement("p");
+      meta.className = "model-meta";
+      meta.textContent = formatBytes(m.size) + " · Licencia " + m.license;
+      card.appendChild(meta);
+
+      var desc = document.createElement("p");
+      desc.className = "model-desc";
+      desc.textContent = m.description;
+      card.appendChild(desc);
+
+      if (m.warning) {
+        var warn = document.createElement("p");
+        warn.className = "model-warning";
+        warn.textContent = m.warning;
+        card.appendChild(warn);
+      }
+
+      var isInstalled = !!(installed[m.id] && installed[m.id].installed);
+      var downloading = st.status === "downloading" && st.progress && st.progress.id === m.id;
+      var actions = document.createElement("div");
+      actions.className = "model-actions";
+
+      if (downloading) {
+        var pct = st.progress.total ? Math.floor((st.progress.loaded / st.progress.total) * 100) : 0;
+        var bar = document.createElement("div");
+        bar.className = "progress";
+        bar.setAttribute("role", "progressbar");
+        bar.setAttribute("aria-valuemin", "0");
+        bar.setAttribute("aria-valuemax", "100");
+        bar.setAttribute("aria-valuenow", String(pct));
+        var fill = document.createElement("i");
+        fill.style.width = pct + "%";
+        bar.appendChild(fill);
+        card.appendChild(bar);
+        var ptxt = document.createElement("p");
+        ptxt.className = "model-meta";
+        ptxt.textContent = "Descargando… " + pct + "% (" + formatBytes(st.progress.loaded) + " de " + formatBytes(st.progress.total) + "). Dejá la app abierta.";
+        card.appendChild(ptxt);
+        actions.appendChild(makeButton("Cancelar descarga", "btn-secondary", function () {
+          engine.cancelDownload();
+        }));
+      } else if (isInstalled) {
+        var status = document.createElement("p");
+        status.className = "model-status";
+        var loadedHere = st.loadedId === m.id;
+        status.textContent = activeId === m.id
+          ? (loadedHere ? "Descargado · En uso (cargado en memoria)" : "Descargado · Elegido para chatear")
+          : "Descargado en este dispositivo";
+        card.appendChild(status);
+        if (activeId !== m.id) {
+          actions.appendChild(makeButton("Usar este modelo", "btn-primary", function () {
+            engine.setActive(m.id);
+            void renderModels();
+          }));
+        }
+        if (state.modelConfirm && state.modelConfirm.id === m.id && state.modelConfirm.type === "delete") {
+          var q = document.createElement("p");
+          q.className = "model-confirm";
+          q.textContent = "¿Eliminar este modelo del dispositivo? Libera " + formatBytes(m.size) + ". Para volver a usarlo hay que descargarlo otra vez.";
+          card.appendChild(q);
+          actions.appendChild(makeButton("Cancelar", "btn-secondary", function () {
+            state.modelConfirm = null;
+            void renderModels();
+          }));
+          actions.appendChild(makeButton("Sí, eliminar", "btn-danger", function () {
+            state.modelConfirm = null;
+            void removeModel(m.id);
+          }));
+        } else {
+          actions.appendChild(makeButton("Eliminar", "btn-secondary", function () {
+            state.modelConfirm = { id: m.id, type: "delete" };
+            void renderModels();
+          }));
+        }
+      } else if (state.modelConfirm && state.modelConfirm.id === m.id && state.modelConfirm.type === "download") {
+        var extra = engineCache.cached ? 0 : engine.engineSize;
+        var c = document.createElement("p");
+        c.className = "model-confirm";
+        c.textContent = "Se van a descargar " + formatBytes(m.size) + " del modelo desde huggingface.co" +
+          (extra ? " y " + formatBytes(extra) + " del motor desde este sitio" : "") +
+          ". Total: " + formatBytes(m.size + extra) + ". Conviene usar Wi‑Fi. Tus conversaciones no se envían.";
+        card.appendChild(c);
+        actions.appendChild(makeButton("Cancelar", "btn-secondary", function () {
+          state.modelConfirm = null;
+          void renderModels();
+        }));
+        actions.appendChild(makeButton("Sí, descargar", "btn-primary", function () {
+          state.modelConfirm = null;
+          void downloadModel(m.id);
+        }));
+      } else {
+        var dl = makeButton("Descargar (" + formatBytes(m.size) + ")", "btn-primary", function () {
+          state.modelConfirm = { id: m.id, type: "download" };
+          void renderModels();
+        });
+        if (st.status === "downloading" || navigator.onLine === false) dl.disabled = true;
+        actions.appendChild(dl);
+        if (navigator.onLine === false) {
+          var off = document.createElement("p");
+          off.className = "model-meta";
+          off.textContent = "Sin conexión: para descargar hace falta internet.";
+          card.appendChild(off);
+        }
+      }
+      card.appendChild(actions);
+      els.modelsList.appendChild(card);
+    });
+
+    els.modelsEngine.textContent = engineCache.cached
+      ? "Motor (llama.cpp / wllama" + (engine.compat ? ", versión compatible con Safari" : "") + "): descargado, " + formatBytes(engine.engineSize) + "."
+      : "Motor (llama.cpp / wllama" + (engine.compat ? ", versión compatible con Safari" : "") + "): " + formatBytes(engine.engineSize) + ", se baja junto con el primer modelo.";
+
+    var info = await engine.storageInfo();
+    var parts = [];
+    if (info.usage !== null && info.usage !== undefined) {
+      parts.push("Espacio usado por la app: " + formatBytes(info.usage) +
+        (info.quota ? " de " + formatBytes(info.quota) + " permitidos" : ""));
+    } else {
+      parts.push("Este navegador no informa cuánto espacio se usa.");
+    }
+    if (info.persisted === true) parts.push("Almacenamiento persistente: activado.");
+    else if (info.persisted === false) parts.push("Almacenamiento persistente: no concedido (en iPhone, agregá la app a la pantalla de inicio).");
+    els.modelsStorage.innerHTML = "";
+    var sp = document.createElement("p");
+    sp.textContent = parts.join(" ");
+    els.modelsStorage.appendChild(sp);
+    if (info.persisted === false) {
+      els.modelsStorage.appendChild(makeButton("Pedir que no se borre", "btn-secondary", function () {
+        void engine.requestPersist().then(function () { return renderModels(); });
+      }));
+    }
+    if (els.gpuToggle) els.gpuToggle.checked = engine.getUseGpu();
+  }
+
+  async function downloadModel(id) {
+    var engine = getEngine();
+    if (!engine) return;
+    state.modelError = null;
+    var lastRender = 0;
+    var unsub = function (p) {
+      var now = Date.now();
+      if (!els.modelsDialog.hidden && now - lastRender > 400) {
+        lastRender = now;
+        void renderModels();
+      }
+    };
+    try {
+      var promise = engine.download(id, unsub);
+      void renderModels();
+      await promise;
+    } catch (err) {
+      state.modelError = "No se pudo descargar: " + (err && err.message ? err.message : err);
+    }
+    await renderModels();
+  }
+
+  async function removeModel(id) {
+    var engine = getEngine();
+    if (!engine) return;
+    try {
+      await engine.remove(id);
+      var left = await engine.listInstalled();
+      var any = left.some(function (x) { return x.installed; });
+      if (!any) await engine.deleteEngine();
+    } catch (err) {
+      state.modelError = "No se pudo eliminar: " + (err && err.message ? err.message : err);
+    }
+    await renderModels();
   }
 
   function closeModels() {
@@ -418,6 +704,11 @@
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (state.busy) {
+      var running = getEngine();
+      if (running) running.stop();
+      return;
+    }
     var text = els.input.value.replace(/^\s+|\s+$/g, "");
     if (!text) return;
     if (!storage) return;
@@ -425,23 +716,118 @@
     var conversation = await ensureConversation();
     await storage.appendMessage(conversation.id, { role: "user", content: text });
     saveLastId(conversation.id);
+    state.notice = null;
 
     els.input.value = "";
     resizeComposer();
-    els.send.disabled = true;
-    syncTypingIndicator();
+    await runAssistant(conversation.id);
+  }
+
+  async function pickModel(engine) {
+    var list = await engine.listInstalled();
+    var installed = list.filter(function (x) { return x.installed; });
+    if (!installed.length) return null;
+    var active = engine.getActiveId();
+    var chosen = installed.filter(function (x) { return x.id === active; })[0] || installed[0];
+    if (chosen.id !== active) engine.setActive(chosen.id);
+    return chosen.id;
+  }
+
+  async function runAssistant(conversationId) {
+    var engine = getEngine();
+    if (!engine) {
+      state.notice = { conversationId: conversationId, kind: "info", text: NOTICE_NO_ENGINE };
+      await refreshCurrent();
+      return;
+    }
+    var modelId = null;
+    try {
+      modelId = await pickModel(engine);
+    } catch (err) {
+      modelId = null;
+    }
+    if (!modelId) {
+      state.notice = { conversationId: conversationId, kind: "info", text: NOTICE_NO_MODEL, action: "models" };
+      await refreshCurrent();
+      return;
+    }
+
+    state.busy = true;
     await refreshCurrent();
+    syncTypingIndicator();
+    try {
+      await engine.load(modelId);
+    } catch (err) {
+      state.busy = false;
+      state.notice = {
+        conversationId: conversationId,
+        kind: "error",
+        text: "No se pudo cargar el modelo: " + (err && err.message ? err.message : err) + " No se generó ninguna respuesta.",
+        action: "models"
+      };
+      await refreshCurrent();
+      return;
+    }
+
+    var conversation = await storage.getConversation(conversationId);
+    var history = conversation.messages.filter(function (m) {
+      return m.role === "user" || m.role === "assistant";
+    }).map(function (m) {
+      return { role: m.role, content: m.content };
+    });
+
+    var bubble = document.createElement("article");
+    bubble.className = "msg msg-assistant is-streaming";
+    var onScreen = state.currentId === conversationId;
+    if (onScreen) {
+      els.messages.appendChild(bubble);
+      scrollToBottom();
+    }
+    state.streamEl = bubble;
+
+    var result = null;
+    var failure = null;
+    try {
+      result = await engine.generate(history, function (partial) {
+        bubble.textContent = partial;
+        if (state.currentId === conversationId) scrollToBottom();
+      });
+    } catch (err) {
+      failure = err;
+    }
+    state.busy = false;
+    state.streamEl = null;
+
+    if (result && result.text.replace(/\s+/g, "")) {
+      var content = result.text.replace(/^\s+|\s+$/g, "");
+      await storage.appendMessage(conversationId, { role: "assistant", content: content });
+      if (result.stopped) {
+        state.notice = { conversationId: conversationId, kind: "info", text: "Respuesta detenida. Se guardó lo que el modelo alcanzó a escribir." };
+      }
+    } else if (failure) {
+      state.notice = {
+        conversationId: conversationId,
+        kind: "error",
+        text: "El modelo falló al responder: " + (failure.message || failure) + " No se generó ninguna respuesta."
+      };
+    } else if (result && result.stopped) {
+      state.notice = { conversationId: conversationId, kind: "info", text: "Respuesta detenida antes de que el modelo escribiera algo." };
+    } else {
+      state.notice = { conversationId: conversationId, kind: "error", text: "El modelo terminó sin escribir texto." };
+    }
+    await refreshCurrent();
+    syncTypingIndicator();
   }
 
   function onInputChange() {
-    els.send.disabled = els.input.value.replace(/^\s+|\s+$/g, "") === "";
+    syncTypingIndicator();
     resizeComposer();
   }
 
   function onComposerKeydown(event) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      if (!els.send.disabled) {
+      if (!els.send.disabled && !state.busy) {
         els.form.requestSubmit();
       }
     }
@@ -498,6 +884,31 @@
   document.addEventListener("keydown", onGlobalKeydown);
   window.addEventListener("online", updateOnlineStatus);
   window.addEventListener("offline", updateOnlineStatus);
+  if (els.gpuToggle) {
+    els.gpuToggle.addEventListener("change", function () {
+      var engine = getEngine();
+      if (!engine) return;
+      engine.setUseGpu(els.gpuToggle.checked);
+      /* Se aplica en la próxima carga del modelo. */
+      void engine.unload().then(function () { return renderModels(); });
+    });
+  }
+
+  function hookEngine() {
+    var engine = getEngine();
+    if (!engine || hookEngine.done) return;
+    hookEngine.done = true;
+    engine.onChange(function () {
+      syncTypingIndicator();
+    });
+    var crashed = engine.lastLoadCrashed();
+    if (crashed) {
+      engine.clearCrashFlag();
+      showStorageWarning("La última vez la carga del modelo no terminó. Puede que el iPhone se haya quedado sin memoria. Cerrá otras apps o probá con el modelo más chico.");
+    }
+  }
+  if (getEngine()) hookEngine();
+  window.addEventListener("mi-ia-local-engine-ready", hookEngine);
 
   if (window.matchMedia) {
     var media = window.matchMedia("(prefers-color-scheme: light)");

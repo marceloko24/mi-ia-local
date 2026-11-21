@@ -56,7 +56,7 @@
           <p class="status-badge" id="status-badge" data-online="true">En línea</p>
           <p class="offline-ready" id="offline-ready" hidden>Disponible sin conexión</p>
         </div>
-        <button type="button" class="icon-btn" id="btn-models" aria-label="Modelos (pendiente)">
+        <button type="button" class="icon-btn" id="btn-models" aria-label="Modelos">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l7 4v8l-7 4-7-4V8l7-4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 12l7-4M12 12v8M12 12L5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </button>
         <button type="button" class="icon-btn" id="btn-theme" aria-label="Cambiar tema">
@@ -88,10 +88,21 @@
   </div>
 
   <div class="dialog" id="models-dialog" role="dialog" aria-modal="true" aria-labelledby="models-title" hidden>
-    <div class="dialog-card">
-      <h2 id="models-title">Modelos</h2>
-      <p>La descarga y el cambio de modelos locales se integran en la etapa 5. Todavía no está disponible.</p>
-      <button type="button" class="btn-primary" id="btn-models-close">Entendido</button>
+    <div class="dialog-card models-card">
+      <div class="models-header">
+        <h2 id="models-title">Modelos</h2>
+        <button type="button" class="icon-btn" id="btn-models-close" aria-label="Cerrar Modelos">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p class="models-intro">Un modelo se descarga una sola vez y queda guardado en este dispositivo. Después la IA responde sin internet. Nada se descarga sin que lo confirmes.</p>
+      <div id="models-list" class="models-list"></div>
+      <p class="models-engine" id="models-engine"></p>
+      <div class="models-storage" id="models-storage"></div>
+      <label class="models-toggle">
+        <input type="checkbox" id="gpu-toggle">
+        <span>Usar la GPU (WebGPU, experimental). Si la app se cierra o responde raro, desactivalo.</span>
+      </label>
     </div>
   </div>
 
@@ -108,5 +119,6 @@
 
   <script src="./storage.js"></script>
   <script src="./app.js"></script>
+  <script type="module" src="./engine.js"></script>
 </body>
 </html>
