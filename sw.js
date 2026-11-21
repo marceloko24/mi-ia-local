@@ -1,16 +1,18 @@
-/* Service worker de la app shell. No hace llamadas de red propias
+/* Service worker de la app shell (v3, etapa 5). No hace llamadas de red propias
    (ni analítica ni pings): solo responde a pedidos de la página y,
    en la instalación, guarda los archivos de la interfaz. */
 (function () {
   "use strict";
 
-  var CACHE_NAME = "mi-ia-local-shell-v2";
+  var CACHE_NAME = "mi-ia-local-shell-v3";
   var PRECACHE_REQUIRED = [
     "./",
     "./index.html",
     "./style.css",
     "./app.js",
     "./storage.js",
+    "./engine.js",
+    "./vendor/wllama/wllama.min.js",
     "./manifest.json"
   ];
   var PRECACHE_OPTIONAL = [
@@ -100,8 +102,11 @@
       return;
     }
 
-    /* Los modelos futuros se dejan pasar al navegador, sin cachear. */
+    /* Los modelos los guarda engine.js (OPFS), no el service worker. */
     if (isModelDownload(url)) return;
+    /* Los .wasm del motor (10–19 MB) no se precachean acá: engine.js los
+       guarda en su propia caché solo cuando se autoriza una descarga. */
+    if (/\/vendor\/wllama\/.*\.wasm$/.test(url.pathname) || /\/vendor\/wllama\/compat\//.test(url.pathname)) return;
     if (url.origin !== self.location.origin) return;
     if (!isInScope(event.request.url)) return;
 

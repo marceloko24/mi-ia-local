@@ -2,11 +2,11 @@
 
 Chat de inteligencia artificial que corre 100% en el iPhone, sin internet ni APIs pagas (PWA).
 
-## Estado actual: etapa 4 (PWA offline)
+## Estado actual: etapa 5 (motor de IA local)
 
-La interfaz y las conversaciones ya se pueden usar sin red, una vez que la app se abrió al menos una vez y el service worker terminó de guardar la interfaz.
+La app ya tiene un motor de IA real que corre dentro del navegador: [wllama](https://github.com/ngxson/wllama) 3.13.0 (llama.cpp compilado a WebAssembly), copiado en `vendor/wllama/`. No usa servidores, APIs comerciales ni cuentas, y las conversaciones nunca salen del dispositivo.
 
-Dirección de GitHub Pages (cuando esté publicada):
+Dirección de GitHub Pages:
 
 **https://marceloko24.github.io/mi-ia-local/**
 
@@ -17,29 +17,57 @@ Dirección de GitHub Pages (cuando esté publicada):
 3. Elegí **Agregar a inicio**.
 4. Confirmá. Se va a crear un ícono en la pantalla de inicio, que abre la app a pantalla completa.
 
-Agregarla al inicio también ayuda a que Safari no borre los datos a los ~7 días de no usarla.
+Agregarla al inicio también ayuda a que Safari no borre los datos (y el modelo) a los ~7 días de no usarla.
+
+### Cómo empezar a chatear
+
+1. Con Wi‑Fi, abrí la app y tocá el ícono del cubo (**Modelos**).
+2. En el modelo recomendado tocá **Descargar**. La app muestra cuánto se va a bajar y pide confirmación; nada se descarga sin ese «Sí, descargar».
+3. Cuando diga **Descargado**, cerrá el panel y escribí un mensaje. La primera vez el modelo tarda unos segundos en cargarse en memoria.
+4. Desde ahí, funciona en modo avión.
+
+### Modelos disponibles
+
+| Modelo | Tamaño | Origen | Notas |
+|---|---|---|---|
+| Qwen2.5 0.5B Instruct Q4_K_M | 397.808.192 bytes (398 MB) | [bartowski/Qwen2.5-0.5B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF), commit `41ba88d` | Recomendado. Apache 2.0. Responde en español, pero es un modelo chico y se equivoca seguido. |
+| Llama 3.2 1B Instruct Q4_K_M | 807.694.464 bytes (808 MB) | [bartowski/Llama-3.2-1B-Instruct-GGUF](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF), commit `067b946` | Experimental en 3 GB de RAM: puede cerrarse por falta de memoria. |
+
+Además, con el primer modelo se baja el motor desde este mismo sitio: 18,9 MB en Safari/iPhone (versión «compat») o 10,2 MB en Chrome.
+
+### Dónde se guarda cada cosa
+
+- Conversaciones: IndexedDB, en este dispositivo.
+- Modelos: Origin Private File System (OPFS) del navegador, gestionado por wllama.
+- Motor (`.wasm`): Cache API (`mi-ia-local-engine-v1`), guardado solo al descargar un modelo.
+- Interfaz: service worker `mi-ia-local-shell-v3` (incluye `engine.js` y `vendor/wllama/wllama.min.js`).
 
 ### Lo que ya funciona
 
-- Interfaz de chat para iPhone SE, con tema claro y oscuro
-- Conversaciones guardadas en IndexedDB, en este dispositivo
-- App shell en caché (HTML, CSS, JS, íconos y manifiesto), con un service worker en modo cache-first
-- Distintivo **En línea** / **Sin conexión**, según haya red
-- Indicador **Disponible sin conexión**, que solo aparece cuando la interfaz ya está guardada en la caché
-- Si enviás un mensaje, se muestra el aviso del motor pendiente. No se inventan respuestas de IA
+- Chat con tema claro y oscuro, historial, nueva conversación y borrar conversaciones.
+- Panel **Modelos**: tamaño, descarga con confirmación y progreso, cancelar descarga, elegir el modelo en uso, eliminar modelo, espacio usado (`navigator.storage.estimate`) y pedido de almacenamiento persistente (`navigator.storage.persist`).
+- Respuestas reales del modelo, escritas a medida que se generan, con el indicador de generación y un botón para **detener**. La respuesta se guarda en IndexedDB.
+- Sin modelo descargado, la app lo avisa y no inventa respuestas. Si el motor falla, muestra el error en español.
 
-### Todavía no hay
+### Qué se probó y dónde
 
-- Motor de IA local. No se generan respuestas y no se simulan. Eso es la etapa 5.
-- Descarga ni ejecución de modelos. El service worker no cachea ni intercepta descargas futuras de modelos (por ejemplo archivos `.gguf`), hasta que se definan con cuidado más adelante.
+Todo en Chrome headless (Linux, Playwright) con pantalla de 375×667, **no** en un iPhone ni en Safari:
 
-### Límites honestos
+- Descarga real de Qwen2.5 0.5B desde Hugging Face con la interfaz (≈37 s en el servidor de pruebas).
+- Respuesta real del modelo («La capital de Uruguay es Montevideo.»), con el motor normal y con el motor «compat» que usa Safari (forzado en Chrome).
+- Con la red cortada (modo sin conexión del navegador): recarga de la app y respuesta real del modelo.
+- Conversación de varios turnos, detener una respuesta, eliminar el modelo.
+- Velocidad en ese servidor (un hilo): ~4 tokens/s, y 4–12 s hasta la primera palabra. En el iPhone puede ser distinto.
 
-- La primera visita necesita red para descargar la app y cachearla. Recién después se puede recargar en modo avión.
-- En iOS, Safari puede borrar los datos de un sitio después de unos 7 días sin usarlo, salvo que esté agregada a la pantalla de inicio.
-- `navigator.storage.persist()` se pide en silencio. En iPhone suele no alcanzarse hasta agregar la app al inicio.
-- Esta PWA todavía no se probó en un Safari real de iPhone; las pruebas de esta etapa se hicieron en Chrome del entorno de desarrollo, a 375×667.
-- Los datos quedan en el navegador de este dispositivo; no se envían a un servidor.
+### Límites honestos (iPhone SE 2020, 3 GB)
+
+- **Todavía no se probó en el iPhone.** Esa es la etapa 6.
+- Safari no tiene JSPI ni Memory64, así que usa la versión «compat» de wllama, que el propio proyecto describe como más lenta.
+- GitHub Pages no permite los encabezados COOP/COEP, así que no hay `SharedArrayBuffer`: el motor corre en **un solo hilo**.
+- Memoria: el modelo de 0.5B ocupa ~400 MB más el contexto (2048 tokens). iOS puede cerrar la pestaña si se queda sin memoria; si pasa durante la carga, la app lo avisa la próxima vez que se abre.
+- La GPU (WebGPU) está desactivada por defecto; hay un interruptor experimental en **Modelos**.
+- Safari puede borrar datos de sitios que no se usan en ~7 días si la app no está en la pantalla de inicio. Si se borra el modelo, hay que descargarlo de nuevo.
+- La calidad de un modelo de 0.5B es limitada: puede inventar datos o confundirse en conversaciones largas. El historial se recorta para que entre en el contexto.
 
 ## Cómo abrirla en local
 
