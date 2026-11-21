@@ -1,0 +1,35 @@
+name: Decodificar íconos PNG
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "icons/*.b64"
+      - ".github/workflows/decode-icons.yml"
+  workflow_dispatch:
+
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decodificar y commitear los PNG
+        run: |
+          set -euo pipefail
+          mkdir -p icons
+          for f in icons/*.b64; do
+            [ -f "$f" ] || continue
+            out="${f%.b64}"
+            base64 -d "$f" > "$out"
+          done
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add icons/apple-touch-icon.png icons/icon-192.png icons/icon-512.png
+          if git diff --cached --quiet; then
+            echo "Los PNG ya estaban actualizados."
+            exit 0
+          fi
+          git commit -m "Agregar íconos PNG de la PWA"
+          git push

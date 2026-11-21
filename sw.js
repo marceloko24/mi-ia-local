@@ -4,17 +4,20 @@
 (function () {
   "use strict";
 
-  var CACHE_NAME = "mi-ia-local-shell-v1";
-  var PRECACHE = [
+  var CACHE_NAME = "mi-ia-local-shell-v2";
+  var PRECACHE_REQUIRED = [
     "./",
     "./index.html",
     "./style.css",
     "./app.js",
     "./storage.js",
-    "./manifest.json",
+    "./manifest.json"
+  ];
+  var PRECACHE_OPTIONAL = [
+    "./icons/icon.svg",
+    "./icons/apple-touch-icon.png",
     "./icons/icon-192.png",
-    "./icons/icon-512.png",
-    "./icons/apple-touch-icon.png"
+    "./icons/icon-512.png"
   ];
 
   function isModelDownload(url) {
@@ -35,8 +38,8 @@
   self.addEventListener("install", function (event) {
     event.waitUntil(
       caches.open(CACHE_NAME).then(function (cache) {
-        return Promise.all(
-          PRECACHE.map(function (url) {
+        var required = Promise.all(
+          PRECACHE_REQUIRED.map(function (url) {
             return fetch(url, { cache: "reload" }).then(function (response) {
               if (!response || !response.ok) {
                 throw new Error("No se pudo precachear " + url);
@@ -45,6 +48,18 @@
             });
           })
         );
+        var optional = Promise.all(
+          PRECACHE_OPTIONAL.map(function (url) {
+            return fetch(url, { cache: "reload" }).then(function (response) {
+              if (response && response.ok) {
+                return cache.put(url, response);
+              }
+            }).catch(function () {
+              /* Íconos opcionales: el conector no pudo subir PNG. */
+            });
+          })
+        );
+        return required.then(function () { return optional; });
       }).then(function () {
         return self.skipWaiting();
       }).then(function () {
