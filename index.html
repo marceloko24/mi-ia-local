@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0e0f11">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mi IA Local">
+  <title>Mi IA Local</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%237c8cff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("mi-ia-local-theme");
+        var theme = saved === "light" || saved === "dark"
+          ? saved
+          : (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.setAttribute("data-theme", theme);
+        var color = theme === "light" ? "#f6f6f7" : "#0e0f11";
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute("content", color);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div class="app">
+    <div class="backdrop" id="backdrop" hidden></div>
+
+    <aside class="sidebar" id="sidebar" aria-label="Historial de conversaciones" aria-hidden="true">
+      <div class="sidebar-header">
+        <h2>Conversaciones</h2>
+        <button type="button" class="icon-btn" id="btn-close-sidebar" aria-label="Cerrar historial">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <button type="button" class="btn-primary sidebar-new" id="btn-new-sidebar">Nueva conversación</button>
+      <nav class="conversation-list" id="conversation-list" aria-label="Lista de conversaciones"></nav>
+    </aside>
+
+    <div class="shell">
+      <header class="topbar">
+        <button type="button" class="icon-btn" id="btn-menu" aria-label="Abrir historial" aria-controls="sidebar" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <div class="topbar-title">
+          <h1>Mi IA Local</h1>
+          <p class="status-badge" id="status-badge" data-online="true">En línea</p>
+        </div>
+        <button type="button" class="icon-btn" id="btn-models" aria-label="Modelos (pendiente)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l7 4v8l-7 4-7-4V8l7-4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 12l7-4M12 12v8M12 12L5 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-theme" aria-label="Cambiar tema">
+          <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2M12 19v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M3 12h2M19 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3.2A8.5 8.5 0 1 0 20.8 14 7 7 0 0 1 16 3.2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-new" aria-label="Nueva conversación">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </header>
+
+      <main class="chat" id="chat" aria-live="polite">
+        <div class="messages" id="messages"></div>
+        <div class="typing" id="typing-indicator" hidden>
+          <span class="typing-label">La IA está escribiendo</span>
+          <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+      </main>
+
+      <form class="composer" id="composer-form" autocomplete="off">
+        <label class="sr-only" for="composer-input">Mensaje</label>
+        <textarea id="composer-input" name="message" rows="1" maxlength="8000" placeholder="Escribí un mensaje…" enterkeyhint="send"></textarea>
+        <button type="submit" class="btn-send" id="btn-send" aria-label="Enviar" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="dialog" id="models-dialog" role="dialog" aria-modal="true" aria-labelledby="models-title" hidden>
+    <div class="dialog-card">
+      <h2 id="models-title">Modelos</h2>
+      <p>La descarga y el cambio de modelos locales se integran en la etapa 5. Todavía no está disponible.</p>
+      <button type="button" class="btn-primary" id="btn-models-close">Entendido</button>
+    </div>
+  </div>
+
+  <div class="dialog" id="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
+    <div class="dialog-card">
+      <h2 id="confirm-title">¿Eliminar esta conversación?</h2>
+      <p>Se borra solo de esta sesión. Esta acción no se puede deshacer.</p>
+      <div class="dialog-actions">
+        <button type="button" class="btn-secondary" id="btn-confirm-cancel">Cancelar</button>
+        <button type="button" class="btn-danger" id="btn-confirm-delete">Eliminar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
