@@ -96,7 +96,8 @@
     confirmCancel: document.getElementById("btn-confirm-cancel"),
     confirmDelete: document.getElementById("btn-confirm-delete"),
     status: document.getElementById("status-badge"),
-    storageWarning: document.getElementById("storage-warning")
+    storageWarning: document.getElementById("storage-warning"),
+    offlineReady: document.getElementById("offline-ready")
   };
 
   function setSidebarOpen(open) {
@@ -110,6 +111,74 @@
     var online = navigator.onLine !== false;
     els.status.dataset.online = online ? "true" : "false";
     els.status.textContent = online ? "En línea" : "Sin conexión";
+  }
+
+  function setOfflineReady(ready) {
+    if (!els.offlineReady) return;
+    els.offlineReady.hidden = !ready;
+  }
+
+  async function isShellCached() {
+    if (!("caches" in window)) return false;
+    try {
+      var keys = await caches.keys();
+      var name = keys.filter(function (key) {
+        return key.indexOf("mi-ia-local-shell-") === 0;
+      }).pop();
+      if (!name) return false;
+      var cache = await caches.open(name);
+      var candidates = ["./index.html", "./", "index.html"];
+      var i;
+      for (i = 0; i < candidates.length; i++) {
+        var hit = await cache.match(candidates[i], { ignoreSearch: true });
+        if (hit) return true;
+      }
+      var stored = await cache.keys();
+      return stored.some(function (request) {
+        var path = new URL(request.url).pathname;
+        return /index\.html$/.test(path) || /\/mi-ia-local\/?$/.test(path);
+      });
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async function refreshOfflineReady() {
+    setOfflineReady(await isShellCached());
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    try {
+      var register = navigator.serviceWorker.register("./sw.js", { scope: "./" });
+      register.then(function (reg) {
+        if (reg.installing) {
+          reg.installing.addEventListener("statechange", function (event) {
+            if (event.target && event.target.state === "installed") {
+              void refreshOfflineReady();
+            }
+          });
+        }
+        if (reg.waiting || reg.active) {
+          void refreshOfflineReady();
+        }
+        return navigator.serviceWorker.ready;
+      }).then(function () {
+        void refreshOfflineReady();
+      }).catch(function () {
+        /* Si el SW no se instala, simplemente no se muestra "Disponible sin conexión". */
+      });
+      navigator.serviceWorker.addEventListener("message", function (event) {
+        if (event.data && event.data.type === "shell-cached") {
+          void refreshOfflineReady();
+        }
+      });
+      navigator.serviceWorker.addEventListener("controllerchange", function () {
+        void refreshOfflineReady();
+      });
+    } catch (err) {
+      /* ignore */
+    }
   }
 
   function syncTypingIndicator() {
@@ -452,6 +521,8 @@
 
   updateOnlineStatus();
   syncTypingIndicator();
+  registerServiceWorker();
+  void refreshOfflineReady();
   void (async function start() {
     try {
       if (!window.MiIaLocalStorage || typeof window.MiIaLocalStorage.open !== "function") {

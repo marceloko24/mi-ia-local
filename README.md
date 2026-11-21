@@ -2,35 +2,46 @@
 
 Chat de inteligencia artificial que corre 100% en el iPhone, sin internet ni APIs pagas (PWA).
 
-## Estado actual: etapa 3 (almacenamiento local)
+## Estado actual: etapa 4 (PWA offline)
 
-Esta etapa suma el guardado de conversaciones en el dispositivo, con IndexedDB.
+La interfaz y las conversaciones ya se pueden usar sin red, una vez que la app se abrió al menos una vez y el service worker terminó de guardar la interfaz.
 
-Lo que ya funciona:
+Dirección de GitHub Pages (cuando esté publicada):
+
+**https://marceloko24.github.io/mi-ia-local/**
+
+### Cómo instalarla en el iPhone
+
+1. En Safari, abrí esa dirección.
+2. Tocá el botón Compartir (el cuadrado con la flecha hacia arriba).
+3. Elegí **Agregar a inicio**.
+4. Confirmá. Se va a crear un ícono en la pantalla de inicio, que abre la app a pantalla completa.
+
+Agregarla al inicio también ayuda a que Safari no borre los datos a los ~7 días de no usarla.
+
+### Lo que ya funciona
 
 - Interfaz de chat para iPhone SE, con tema claro y oscuro
-- Historial en un panel lateral, nueva conversación y eliminación confirmada
-- Conversaciones y mensajes guardados en IndexedDB (base `mi-ia-local`), en este dispositivo
-- Al recargar, se restablece la última conversación abierta
-- Si IndexedDB no está disponible (por ejemplo, en algunas ventanas privadas de Safari), la app sigue andando en memoria y muestra un aviso claro: las conversaciones se van a perder al recargar
-- El aviso «Motor de IA local pendiente de integración. Todavía no se generan respuestas.» se muestra en pantalla, pero no se guarda como si fuera un mensaje de la IA
-- Distintivo «En línea» / «Sin conexión»
-- Sección de modelos, todavía como pendiente (etapa 5)
+- Conversaciones guardadas en IndexedDB, en este dispositivo
+- App shell en caché (HTML, CSS, JS, íconos y manifiesto), con un service worker en modo cache-first
+- Distintivo **En línea** / **Sin conexión**, según haya red
+- Indicador **Disponible sin conexión**, que solo aparece cuando la interfaz ya está guardada en la caché
+- Si enviás un mensaje, se muestra el aviso del motor pendiente. No se inventan respuestas de IA
 
-Todavía no hay:
+### Todavía no hay
 
-- Motor de IA local. No se generan respuestas y no se simulan.
-- Funcionamiento offline como PWA. El service worker es la etapa 4.
-- Descarga ni cambio de modelos. Eso es la etapa 5.
+- Motor de IA local. No se generan respuestas y no se simulan. Eso es la etapa 5.
+- Descarga ni ejecución de modelos. El service worker no cachea ni intercepta descargas futuras de modelos (por ejemplo archivos `.gguf`), hasta que se definan con cuidado más adelante.
 
-## Límites honestos del almacenamiento
+### Límites honestos
 
+- La primera visita necesita red para descargar la app y cachearla. Recién después se puede recargar en modo avión.
+- En iOS, Safari puede borrar los datos de un sitio después de unos 7 días sin usarlo, salvo que esté agregada a la pantalla de inicio.
+- `navigator.storage.persist()` se pide en silencio. En iPhone suele no alcanzarse hasta agregar la app al inicio.
+- Esta PWA todavía no se probó en un Safari real de iPhone; las pruebas de esta etapa se hicieron en Chrome del entorno de desarrollo, a 375×667.
 - Los datos quedan en el navegador de este dispositivo; no se envían a un servidor.
-- En iOS, Safari puede borrar los datos de un sitio después de unos 7 días sin usarlo, salvo que la app esté agregada a la pantalla de inicio. Esta etapa todavía no incluye esa instalación como PWA.
-- `navigator.storage.persist()` se pide en silencio, sin molestar. En iPhone suele no alcanzarse hasta agregar la app al inicio.
-- El tema y cuál fue la última conversación se recuerdan en `localStorage`.
 
-## Cómo abrirla
+## Cómo abrirla en local
 
 1. Descargá o cloná este repositorio.
 2. Desde la carpeta del proyecto, serví los archivos con cualquier servidor estático, por ejemplo:
@@ -41,8 +52,4 @@ Todavía no hay:
 
 3. Abrí `http://localhost:8080` en el navegador.
 
-También se puede abrir `index.html` de forma directa, aunque un servidor local se parece más a cómo se va a usar después.
-
-En un iPhone, la forma práctica de probarla va a ser cuando se publique o se sirva por la red local. Esta etapa todavía no incluye una prueba en Safari real.
-
-No hace falta cuenta, API ni conexión a internet para ver la interfaz y guardar conversaciones. Si no hay red, tiene que verse el distintivo «Sin conexión»; igual no va a responder un modelo todavía.
+También se puede abrir `index.html` de forma directa, pero el service worker y la PWA necesitan un origen (http o https), no un archivo `file://`.
