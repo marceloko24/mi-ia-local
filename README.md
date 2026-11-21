@@ -1,2 +1,3 @@
-# mi-ia-local
-Mi IA Local: chat de IA que corre 100% en el iPhone, sin internet ni APIs pagas (PWA)
+# Mi IA Local
+
+Proyecto en etapa 1: repositorio creado; todavía no hay código de la aplicación.
