@@ -30,17 +30,30 @@ Agregarla al inicio también ayuda a que Safari no borre los datos (y el modelo)
 
 | Modelo | Tamaño | Origen | Notas |
 |---|---|---|---|
-| Qwen2.5 0.5B Instruct Q4_K_M | 397.808.192 bytes (398 MB) | [bartowski/Qwen2.5-0.5B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF), commit `41ba88d` | Recomendado. Apache 2.0. Responde en español, pero es un modelo chico y se equivoca seguido. |
-| Llama 3.2 1B Instruct Q4_K_M | 807.694.464 bytes (808 MB) | [bartowski/Llama-3.2-1B-Instruct-GGUF](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF), commit `067b946` | Experimental en 3 GB de RAM: puede cerrarse por falta de memoria. |
+| Qwen2.5 0.5B Instruct Q4_K_M | 397.808.192 bytes (398 MB) | [bartowski/Qwen2.5-0.5B-Instruct-GGUF](https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF), commit `41ba88d` | Recomendado. Apache 2.0. Responde más preguntas que los otros, pero todavía inventa datos a veces. |
+| Qwen3 0.6B Q4_K_M | 484.220.320 bytes (484 MB) | [bartowski/Qwen_Qwen3-0.6B-GGUF](https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF), commit `60b85c0` | «Más prudente». Apache 2.0. En las pruebas casi no inventó, pero a veces dice «No lo sé» aunque la pregunta sea fácil. Se usa sin el modo «pensar». |
+| Llama 3.2 1B Instruct Q4_K_M | 807.694.464 bytes (808 MB) | [bartowski/Llama-3.2-1B-Instruct-GGUF](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF), commit `067b946` | Experimental en 3 GB de RAM: puede cerrarse por falta de memoria. En las pruebas se negó a responder preguntas simples. |
 
 Además, con el primer modelo se baja el motor desde este mismo sitio: 18,9 MB en Safari/iPhone (versión «compat») o 10,2 MB en Chrome.
+
+### Cómo se reduce que invente (y por qué no se puede garantizar)
+
+Agustín pidió que la IA no invente nada. Se aplicó esto en `engine.js`:
+
+- **Muestreo determinista**: temperatura 0 (siempre la palabra más probable), con una penalización leve de repetición (1,1 sobre los últimos 64 tokens). Se probaron 0,7, 0,2 y 0, y con 0 hubo menos invenciones.
+- **Instrucciones en español**: no tiene internet; para noticias, partidos, precios, clima o la fecha tiene que decir «No lo sé»; de la persona solo usa lo que le contó; no inventa nombres, números, fechas, citas ni enlaces.
+- **Ejemplos fijos** de respuestas correctas, que van antes de cada conversación y no se guardan.
+- **Respuestas más cortas**: máximo 256 tokens.
+- Un aviso fijo bajo el cuadro de texto: «La IA local puede equivocarse. Verificá datos importantes.»
+
+**No se puede garantizar que nunca invente.** Un modelo de 0,5B no sabe cuándo no sabe; las instrucciones bajan el problema, no lo eliminan. Con 34 preguntas de prueba, Qwen2.5 0.5B pasó de 17 a 9 respuestas con datos inventados o falsos, y Qwen3 0.6B tuvo 3, aunque se negó a responder 4 preguntas fáciles. El detalle está en [docs/eval-antialucinacion.md](docs/eval-antialucinacion.md).
 
 ### Dónde se guarda cada cosa
 
 - Conversaciones: IndexedDB, en este dispositivo.
 - Modelos: Origin Private File System (OPFS) del navegador, gestionado por wllama.
 - Motor (`.wasm`): Cache API (`mi-ia-local-engine-v1`), guardado solo al descargar un modelo.
-- Interfaz: service worker `mi-ia-local-shell-v3` (incluye `engine.js` y `vendor/wllama/wllama.min.js`).
+- Interfaz: service worker `mi-ia-local-shell-v4` (incluye `engine.js` y `vendor/wllama/wllama.min.js`).
 
 ### Lo que ya funciona
 

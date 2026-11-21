@@ -1,10 +1,10 @@
-/* Service worker de la app shell (v3, etapa 5). No hace llamadas de red propias
+/* Service worker de la app shell (v4, etapa 5: menos invenciones). No hace llamadas de red propias
    (ni analítica ni pings): solo responde a pedidos de la página y,
    en la instalación, guarda los archivos de la interfaz. */
 (function () {
   "use strict";
 
-  var CACHE_NAME = "mi-ia-local-shell-v3";
+  var CACHE_NAME = "mi-ia-local-shell-v4";
   var PRECACHE_REQUIRED = [
     "./",
     "./index.html",
