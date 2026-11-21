@@ -510,10 +510,10 @@
       var name = document.createElement("h3");
       name.textContent = m.name;
       head.appendChild(name);
-      if (m.recommended) {
+      if (m.recommended || m.badge) {
         var badge = document.createElement("span");
         badge.className = "model-badge";
-        badge.textContent = "Recomendado";
+        badge.textContent = m.recommended ? "Recomendado" : m.badge;
         head.appendChild(badge);
       }
       card.appendChild(head);

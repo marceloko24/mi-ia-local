@@ -10,10 +10,53 @@ var ACTIVE_KEY = "mi-ia-local-active-model";
 var GPU_KEY = "mi-ia-local-use-gpu";
 var LOADING_KEY = "mi-ia-local-loading-model";
 
-var SYSTEM_PROMPT =
-  "Sos un asistente útil que corre sin internet en el teléfono de la persona. " +
-  "Respondé siempre en español, de forma clara y breve. " +
-  "Si no sabés algo, decilo en vez de inventarlo.";
+/* Instrucciones fijas para reducir respuestas inventadas. Un modelo
+   chico igual puede equivocarse: esto lo reduce, no lo elimina. */
+var SYSTEM_PROMPT = [
+  "Sos un asistente que funciona sin internet, dentro del teléfono de la persona. Respondé en español, corto y directo.",
+  "- Respondé normalmente lo que es conocimiento general que no cambia: geografía, idiomas, ciencia básica, cuentas.",
+  "- No sabés nada que cambie con el tiempo: noticias, resultados de partidos, precios, cotizaciones, clima, la fecha de hoy. Para eso decí: «No lo sé: no tengo internet ni datos actualizados.»",
+  "- De la persona solo sabés lo que te contó en esta conversación: recordalo y usalo. Si te pregunta algo suyo que no te contó, decí: «No tengo esa información.»",
+  "- Si no conocés a una persona, un libro, un lugar chico o un dato exacto, decí «No lo sé» en vez de adivinar.",
+  "- Nunca inventes nombres, números, fechas, citas ni enlaces."
+].join("\n");
+
+/* Ejemplos cortos que muestran al modelo cómo responder (elegidos
+   probando, ver screens/etapa5/eval-antialucinacion.md). Van siempre
+   antes de la conversación real y no se guardan en el historial. */
+var FEW_SHOT = [
+  { role: "user", content: "¿Cuánto salió el partido de Peñarol el domingo?" },
+  { role: "assistant", content: "No lo sé: no tengo internet ni datos actualizados." },
+  { role: "user", content: "¿Cuál es la capital de Argentina?" },
+  { role: "assistant", content: "Buenos Aires." },
+  { role: "user", content: "¿Cómo se llama mi hermano?" },
+  { role: "assistant", content: "No tengo esa información." },
+  { role: "user", content: "¿Cuánto es 3 + 4 × 5?" },
+  { role: "assistant", content: "Primero se multiplica: 4 × 5 = 20. Después se suma: 3 + 20 = 23. Resultado: 23." },
+  { role: "user", content: "¿Quién escribió el libro «El faro de las nueve lunas» de Ricardo Albornoz Pereda?" },
+  { role: "assistant", content: "No lo sé: no conozco ese libro." },
+  { role: "user", content: "¿Cuántos meses tiene un año?" },
+  { role: "assistant", content: "12." },
+  { role: "user", content: "Mi color favorito es el verde." },
+  { role: "assistant", content: "Anotado: tu color favorito es el verde." },
+  { role: "user", content: "¿Cuál es mi color favorito?" },
+  { role: "assistant", content: "El verde." },
+  { role: "user", content: "¿Y cuál es mi comida favorita?" },
+  { role: "assistant", content: "No tengo esa información: no me lo dijiste." }
+];
+
+/* Muestreo determinista (greedy): el modelo siempre elige la palabra
+   más probable, sin improvisar. La penalización de repetición evita
+   que se quede repitiendo frases. Elegido probando 0,7, 0,2 y 0. */
+var SAMPLING = {
+  temperature: 0,
+  top_k: 1,
+  top_p: 1,
+  min_p: 0,
+  repeat_penalty: 1.1,
+  repeat_last_n: 64
+};
+var MAX_TOKENS = 256;
 
 /* Modelos ofrecidos. Las URLs apuntan a un commit fijo de Hugging Face
    para que el archivo no cambie. Los tamaños se verificaron con curl -I. */
@@ -21,7 +64,7 @@ var CATALOG = [
   {
     id: "qwen2.5-0.5b-q4km",
     name: "Qwen2.5 0.5B Instruct (Q4_K_M)",
-    description: "Recomendado para iPhone SE. Rápido y liviano; entiende español, pero comete errores.",
+    description: "Recomendado para iPhone SE. El más liviano; responde más preguntas, pero en nuestras pruebas todavía inventó datos a veces.",
     url: "https://huggingface.co/bartowski/Qwen2.5-0.5B-Instruct-GGUF/resolve/41ba88dbac95fed2528c92514c131d73eb5a174b/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf",
     size: 397808192,
     license: "Apache 2.0",
@@ -29,9 +72,22 @@ var CATALOG = [
     warning: ""
   },
   {
+    id: "qwen3-0.6b-q4km",
+    name: "Qwen3 0.6B (Q4_K_M)",
+    description: "El más prudente en nuestras pruebas: casi nunca inventó, pero muchas veces dice «No lo sé» aunque la respuesta sea fácil.",
+    url: "https://huggingface.co/bartowski/Qwen_Qwen3-0.6B-GGUF/resolve/60b85c0e3d8fe0f6474f406922a26d12aca4550d/Qwen_Qwen3-0.6B-Q4_K_M.gguf",
+    size: 484220320,
+    license: "Apache 2.0",
+    recommended: false,
+    badge: "Más prudente",
+    warning: "",
+    /* Sin el modo «pensar» de Qwen3: en un iPhone sería demasiado lento. */
+    chatTemplateKwargs: { enable_thinking: false }
+  },
+  {
     id: "llama3.2-1b-q4km",
     name: "Llama 3.2 1B Instruct (Q4_K_M)",
-    description: "Más capaz, pero el doble de pesado y más lento.",
+    description: "El doble de pesado y más lento. En nuestras pruebas casi no inventó, pero se negó a responder preguntas simples y no recordó lo que se le contó.",
     url: "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
     size: 807694464,
     license: "Llama 3.2 Community License",
@@ -343,9 +399,10 @@ function describeError(err) {
 }
 
 /* Recorta el historial para que entre en el contexto de 2048 tokens.
-   Se estima ~3 caracteres por token y se deja lugar para la respuesta. */
+   Se estima ~3 caracteres por token y se deja lugar para la respuesta
+   y para las instrucciones fijas. */
 function trimHistory(messages) {
-  var budget = 3600;
+  var budget = 2800;
   var out = [];
   var used = 0;
   for (var i = messages.length - 1; i >= 0; i--) {
@@ -356,12 +413,30 @@ function trimHistory(messages) {
     used += len;
   }
   while (out.length && out[0].role !== "user") out.shift();
-  return [{ role: "system", content: SYSTEM_PROMPT }].concat(out);
+  return out;
+}
+
+function buildMessages(history, opts) {
+  opts = opts || {};
+  var system = opts.systemPrompt !== undefined ? opts.systemPrompt : SYSTEM_PROMPT;
+  var shots = opts.fewShot !== undefined ? opts.fewShot : FEW_SHOT;
+  var out = [];
+  if (system) out.push({ role: "system", content: system });
+  return out.concat(shots, trimHistory(history));
+}
+
+function samplingParams(opts) {
+  opts = opts || {};
+  var params = {};
+  var base = opts.sampling || SAMPLING;
+  Object.keys(base).forEach(function (k) { params[k] = base[k]; });
+  params.max_tokens = opts.maxTokens || MAX_TOKENS;
+  return params;
 }
 
 var currentGeneration = null;
 
-async function generate(history, onText) {
+async function generate(history, onText, opts) {
   if (!wllama || !loadedId) throw new Error("No hay un modelo cargado.");
   var controller = new AbortController();
   currentGeneration = controller;
@@ -369,15 +444,13 @@ async function generate(history, onText) {
   var text = "";
   var stopped = false;
   try {
-    var stream = await wllama.createChatCompletion({
-      messages: trimHistory(history),
-      stream: true,
-      max_tokens: 512,
-      temperature: 0.7,
-      top_p: 0.9,
-      top_k: 40,
-      abortSignal: controller.signal
-    });
+    var request = samplingParams(opts);
+    request.messages = buildMessages(history, opts);
+    var entry = findModel(loadedId);
+    if (entry && entry.chatTemplateKwargs) request.chat_template_kwargs = entry.chatTemplateKwargs;
+    request.stream = true;
+    request.abortSignal = controller.signal;
+    var stream = await wllama.createChatCompletion(request);
     for await (var chunk of stream) {
       var delta = chunk && chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
       if (delta && delta.content) {
@@ -450,6 +523,15 @@ window.MiIaLocalEngine = {
   storageInfo: storageInfo,
   requestPersist: requestPersist,
   deleteEngine: deleteEngine,
-  onChange: function (fn) { listeners.push(fn); }
+  onChange: function (fn) { listeners.push(fn); },
+  /* Configuración expuesta para las pruebas de evaluación. */
+  config: {
+    systemPrompt: SYSTEM_PROMPT,
+    fewShot: FEW_SHOT,
+    sampling: SAMPLING,
+    maxTokens: MAX_TOKENS,
+    buildMessages: buildMessages,
+    samplingParams: samplingParams
+  }
 };
 window.dispatchEvent(new Event("mi-ia-local-engine-ready"));
